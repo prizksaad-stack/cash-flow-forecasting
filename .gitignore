@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+ENV/
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/
+
+# Données générées (forecasts)
+bdd/
+
+# Fichiers CSV de données
+# Note: Les CSV sont nécessaires pour le projet
+# Si vous voulez les exclure (données sensibles), décommentez:
+# *.csv
+# *.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Fichiers temporaires
+*.tmp
+*.bak
+
+# Fichiers de données (à exclure si sensibles)
+# Décommentez si vous ne voulez pas versionner les CSV
+# *.csv
+
