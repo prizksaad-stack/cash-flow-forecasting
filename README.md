@@ -21,15 +21,15 @@ Système de prévision de trésorerie avec architecture modulaire et dashboard i
 2. Allez sur [Streamlit Cloud](https://streamlit.io/cloud)
 3. Connectez votre compte GitHub
 4. Sélectionnez ce repository
-5. Configurez le chemin: `Python/streamlit_app.py`
+5. Configurez le chemin: `streamlit_app.py`
 6. Déployez!
 
 ### Localement
 
 ```bash
 # Cloner le repository
-git clone https://github.com/votre-username/cash-flow-forecasting.git
-cd cash-flow-forecasting/Python
+git clone https://github.com/prizksaad-stack/cash-flow-forecasting.git
+cd cash-flow-forecasting
 
 # Installer les dépendances
 pip install -r requirements.txt
@@ -41,17 +41,23 @@ streamlit run streamlit_app.py
 ## 📁 Structure du Projet
 
 ```
-Python/
+cash-flow-forecasting/
 ├── streamlit_app.py      # Point d'entrée pour Streamlit Cloud
 ├── main.py               # Point d'entrée local
 ├── requirements.txt      # Dépendances Python
-├── src/                 # Code source modulaire
-│   ├── config/         # Configuration
-│   ├── data/           # Chargement et traitement des données
-│   ├── forecast/       # Moteur de prévision
-│   ├── utils/          # Utilitaires
-│   └── dashboard/      # Interface Streamlit
-└── README.md
+├── setup.py              # Configuration package
+├── src/                  # Code source modulaire
+│   ├── config/          # Configuration
+│   ├── data/            # Chargement et traitement des données
+│   ├── forecast/        # Moteur de prévision
+│   ├── utils/           # Utilitaires
+│   └── dashboard/       # Interface Streamlit
+├── docs/                # Documentation
+│   ├── DEPLOY.md        # Guide de déploiement
+│   ├── QUICK_START.md   # Démarrage rapide
+│   └── ...
+└── scripts/             # Scripts utilitaires
+    └── install_dependencies.sh
 ```
 
 ## 📋 Prérequis
@@ -83,17 +89,13 @@ streamlit run streamlit_app.py
 python main.py --script
 ```
 
-## 🧪 Tests
-
-```bash
-# Vérifier les imports
-python3 -c "import sys; sys.path.insert(0, 'src'); from config import get_config; print('OK')"
-```
-
 ## 📚 Documentation
 
-- [README_IMPROVED.md](README_IMPROVED.md) - Documentation détaillée
-- [CHANGELOG.md](CHANGELOG.md) - Liste des améliorations
+Consultez le dossier `docs/` pour:
+- Guide de déploiement détaillé
+- Démarrage rapide
+- Vérification et tests
+- Configuration GitHub
 
 ## 🤝 Contribution
 
@@ -112,4 +114,3 @@ Projet développé dans le cadre d'un capstone.
 - Streamlit pour le framework de dashboard
 - Pandas et NumPy pour le traitement de données
 - Plotly pour les visualisations interactives
-
