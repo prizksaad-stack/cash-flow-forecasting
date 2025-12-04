@@ -25,7 +25,10 @@ if str(root_path) not in sys.path:
     sys.path.insert(0, str(root_path))
 
 # Use absolute imports from src
-from src.config import get_config, MAX_FORECAST_DATE, DEBT_PRINCIPAL
+from src.config import (
+    get_config, MAX_FORECAST_DATE, DEBT_PRINCIPAL, 
+    DEBT_INTEREST_RATE, DEBT_MONTHLY_INTEREST, DEBT_SPREAD, EURIBOR_3M_BASE
+)
 from src.data import load_all_data, calculate_metrics
 from src.utils import get_real_exchange_rates
 from src.forecast.engine import run_forecast
@@ -154,10 +157,59 @@ def main():
         fx_rates = get_real_exchange_rates(verbose=False)
         metrics = calculate_metrics(bank, sales, purchase, fx_rates)
         
-        # Variables pour le dashboard
+        # Variables pour le dashboard (disponibles dans toutes les sections)
         dso_mean = metrics['dso_mean']
         dpo_mean = metrics['dpo_mean']
         bank = metrics['bank']  # Bank avec amount_eur
+        
+        # Calculer toutes les variables nécessaires pour le forecast
+        avg_daily_credit = metrics['avg_daily_credit']
+        avg_daily_debit = metrics['avg_daily_debit']
+        std_daily_credit = metrics['std_daily_credit']
+        std_daily_debit = metrics['std_daily_debit']
+        weekly_credit_pattern = metrics['weekly_credit_pattern']
+        weekly_debit_pattern = metrics['weekly_debit_pattern']
+        
+        # Calculer l'inflation depuis les données récurrentes
+        bank_recurring = bank[bank['category'].isin(['Supplier Payment', 'Payroll', 'Loan Interest'])].copy()
+        monthly_recurring = pd.Series(dtype=float)  # Initialiser pour éviter erreur de scope
+        if len(bank_recurring) > 0:
+            bank_recurring['month'] = bank_recurring['date'].dt.to_period('M')
+            monthly_recurring = bank_recurring.groupby('month')['amount_eur'].sum().sort_index()
+            
+            if len(monthly_recurring) >= 6:
+                growth_rates = []
+                for i in range(1, len(monthly_recurring)):
+                    if monthly_recurring.iloc[i-1] > 0:
+                        growth = (monthly_recurring.iloc[i] - monthly_recurring.iloc[i-1]) / monthly_recurring.iloc[i-1]
+                        growth_rates.append(growth)
+                if len(growth_rates) > 0:
+                    avg_monthly_growth = np.mean(growth_rates)
+                    annual_inflation = avg_monthly_growth * 12
+                    if annual_inflation < 0 or annual_inflation > 0.10:
+                        inflation_rate = 0.02
+                    else:
+                        inflation_rate = annual_inflation
+                else:
+                    inflation_rate = 0.02
+            else:
+                inflation_rate = 0.02
+        else:
+            inflation_rate = 0.02
+        
+        # Volatilité des volumes
+        volume_volatility_credit = std_daily_credit / avg_daily_credit if avg_daily_credit > 0 else 0
+        volume_volatility_debit = std_daily_debit / avg_daily_debit if avg_daily_debit > 0 else 0
+        
+        # Taux de retard
+        overdue_rate_sales = len(sales[sales['status']=='Overdue']) / len(sales) if len(sales) > 0 else 0
+        overdue_rate_purchase = len(purchase[purchase['status']=='Overdue']) / len(purchase) if len(purchase) > 0 else 0
+        
+        # Écart-types DSO/DPO
+        sales_paid_valid = metrics.get('sales_paid_valid', pd.DataFrame())
+        purchase_paid_valid = metrics.get('purchase_paid_valid', pd.DataFrame())
+        dso_std = sales_paid_valid['days_to_pay'].std() if len(sales_paid_valid) > 0 and 'days_to_pay' in sales_paid_valid.columns else 0
+        dpo_std = purchase_paid_valid['days_to_pay'].std() if len(purchase_paid_valid) > 0 and 'days_to_pay' in purchase_paid_valid.columns else 0
         
     except Exception as e:
         st.error(f"❌ Erreur lors du chargement des données: {e}")
@@ -538,36 +590,111 @@ dpo_mean = purchase_paid_valid['days_to_pay'].mean()
         
         st.markdown("### 📋 Tous les Facteurs d'Impact Calculés")
         
-        # Calculer les facteurs
-        avg_daily_credit = metrics['avg_daily_credit']
-        avg_daily_debit = metrics['avg_daily_debit']
-        std_daily_credit = metrics['std_daily_credit']
-        std_daily_debit = metrics['std_daily_debit']
-        volume_volatility_credit = std_daily_credit / avg_daily_credit if avg_daily_credit > 0 else 0
-        volume_volatility_debit = std_daily_debit / avg_daily_debit if avg_daily_debit > 0 else 0
+        # Les variables sont déjà calculées au début (avg_daily_credit, etc.)
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("#### 💱 Taux de Change")
+            
+            # Nature des valeurs pour taux de change
             usd_rate = fx_rates.get('USD', 0.92)
             jpy_rate = fx_rates.get('JPY', 0.0065)
-            st.metric("USD/EUR", f"{usd_rate:.4f}")
-            st.metric("JPY/EUR", f"{jpy_rate:.6f}")
+            
+            # Détecter si c'est une valeur réelle ou fallback
+            rate_source = "API (temps réel)" if usd_rate != 0.92 or jpy_rate != 0.0065 else "Fallback (moyenne 2024)"
+            rate_color = "🟢" if rate_source.startswith("API") else "🟡"
+            
+            st.markdown(f"""
+            <div style="background-color: #e3f2fd; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 0.9em; color: #004085;">
+            {rate_color} <strong>Source :</strong> {rate_source}<br>
+            📊 <strong>Nature :</strong> {'Taux réel (API)' if rate_source.startswith('API') else 'Valeur par défaut (moyenne 2024)'}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.metric("USD/EUR", f"{usd_rate:.4f}", 
+                     help="Taux réel via API exchangerate-api.com, ou fallback 0.92 (moyenne 2024)")
+            st.metric("JPY/EUR", f"{jpy_rate:.6f}", 
+                     help="Taux réel via API exchangerate-api.com, ou fallback 0.0065 (moyenne 2024)")
+            
+            st.markdown("**Volatilité FX (estimée):**")
+            st.markdown("""
+            <div style="background-color: #fff3e0; padding: 10px; border-radius: 5px; font-size: 0.9em; color: #856404;">
+            ⚠️ <strong>ESTIMÉE</strong> : Volatilité historique typique (pas calculée)<br>
+            📊 <strong>Source :</strong> Observations historiques moyennes 2024<br>
+            💱 USD : ±5% (volatilité typique EUR/USD)<br>
+            💱 JPY : ±8% (volatilité typique EUR/JPY, plus volatile)
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.metric("Volatilité USD", "±5%", help="Estimation : volatilité historique typique EUR/USD")
+            st.metric("Volatilité JPY", "±8%", help="Estimation : volatilité historique typique EUR/JPY")
             
             st.markdown("#### 📈 Inflation")
-            inflation_rate = 0.02  # Par défaut
-            st.metric("Taux Annuel", f"{inflation_rate*100:.2f}%")
-            st.metric("Impact 90 jours", f"{inflation_rate*90/365*100:.2f}%")
+            
+            # Détecter si inflation calculée ou par défaut
+            inflation_source = "Calculée (données historiques)" if len(bank_recurring) > 0 and len(monthly_recurring) >= 6 else "Par défaut (2% zone euro)"
+            inflation_color = "🟢" if inflation_source.startswith("Calculée") else "🟡"
+            
+            st.markdown(f"""
+            <div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 0.9em; color: #155724;">
+            {inflation_color} <strong>Source :</strong> {inflation_source}<br>
+            📊 <strong>Nature :</strong> {'Valeur calculée' if inflation_source.startswith('Calculée') else 'Valeur par défaut (moyenne zone euro 2024)'}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.metric("Taux Annuel", f"{inflation_rate*100:.2f}%", 
+                     help="Calculé depuis évolution coûts récurrents, ou 2% par défaut (moyenne zone euro)")
+            st.metric("Impact 90 jours", f"{inflation_rate*90/365*100:.2f}%", 
+                     help="Ajustement progressif sur 90 jours (inflation annuelle × 90/365)")
         
         with col2:
+            st.markdown("#### ⏱️ Retards de Paiement")
+            
+            st.markdown("""
+            <div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 0.9em; color: #155724;">
+            ✅ <strong>CALCULÉES</strong> : Statistiques descriptives depuis données réelles<br>
+            📊 <strong>Source :</strong> Factures avec status='Overdue' dans fichiers CSV
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.metric("Taux retard clients", f"{overdue_rate_sales*100:.1f}%", 
+                     help="Calculé : (factures Overdue) / (total factures clients)")
+            st.metric("Taux retard fournisseurs", f"{overdue_rate_purchase*100:.1f}%", 
+                     help="Calculé : (factures Overdue) / (total factures fournisseurs)")
+            
+            st.markdown("**Variations (écart-type):**")
+            st.markdown("""
+            <div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 0.9em; color: #155724;">
+            ✅ <strong>CALCULÉES</strong> : Écart-type des délais de paiement<br>
+            📊 <strong>Source :</strong> Calcul statistique sur factures payées
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.metric("Variation DSO", f"±{dso_std:.1f} jours", 
+                     help="Écart-type du DSO : dispersion des délais de recouvrement clients")
+            st.metric("Variation DPO", f"±{dpo_std:.1f} jours", 
+                     help="Écart-type du DPO : dispersion des délais de paiement fournisseurs")
+            
             st.markdown("#### 📊 Volatilité des Volumes")
-            st.metric("Encaissements", f"±{volume_volatility_credit*100:.1f}%")
-            st.metric("Décaissements", f"±{volume_volatility_debit*100:.1f}%")
+            
+            st.markdown("""
+            <div style="background-color: #e8f5e9; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 0.9em; color: #155724;">
+            ✅ <strong>CALCULÉES</strong> : Coefficient de variation (écart-type / moyenne)<br>
+            📊 <strong>Source :</strong> Toutes les transactions bancaires historiques
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.metric("Encaissements", f"±{volume_volatility_credit*100:.1f}%", 
+                     help="Coefficient de variation : écart-type relatif des encaissements quotidiens")
+            st.metric("Décaissements", f"±{volume_volatility_debit*100:.1f}%", 
+                     help="Coefficient de variation : écart-type relatif des décaissements quotidiens")
             
             st.markdown("#### 📊 Statistiques Quotidiennes")
             st.metric("Moyenne Encaissements", f"{avg_daily_credit:,.2f} EUR")
             st.metric("Moyenne Décaissements", f"{avg_daily_debit:,.2f} EUR")
+            st.metric("Écart-type Encaissements", f"{std_daily_credit:,.2f} EUR")
+            st.metric("Écart-type Décaissements", f"{std_daily_debit:,.2f} EUR")
     
     # ========================================================================
     # SECTION 6: LANCER FORECAST
@@ -607,10 +734,8 @@ dpo_mean = purchase_paid_valid['days_to_pay'].mean()
         if st.button("🚀 Lancer le Forecast", type="primary", use_container_width=True):
             with st.spinner("⏳ Calcul du forecast en cours..."):
                 try:
-                    # Calculer tous les paramètres
-                    weekly_credit_pattern = metrics['weekly_credit_pattern']
-                    weekly_debit_pattern = metrics['weekly_debit_pattern']
-                    inflation_rate = 0.02
+                    # Utiliser les variables déjà calculées au début
+                    # (avg_daily_credit, avg_daily_debit, etc. sont déjà définies)
                     
                     # Exécuter le forecast
                     forecast_results = run_forecast(
@@ -671,12 +796,217 @@ dpo_mean = purchase_paid_valid['days_to_pay'].mean()
     elif section == "📊 Scénarios & Risques":
         st.markdown('<div class="section-header">📊 Scénarios & Analyse des Risques</div>', unsafe_allow_html=True)
         
-        if 'forecast_results' not in st.session_state or st.session_state.forecast_results is None:
-            st.warning("⚠️ Lancez d'abord un forecast dans la section '🎯 Lancer Forecast'")
-        else:
+        st.markdown("""
+        ### 📋 Conformité avec les Exigences du Projet
+        
+        Cette section implémente les analyses de risques et scénarios demandés dans le projet :
+        - **Dette €20M** à taux variable (Euribor 3M + 1.2%)
+        - **Scénarios** : Base, Optimiste, Pessimiste
+        - **Risque de taux d'intérêt** : Simulation de chocs ±100bp
+        - **Risque FX** : Simulation de variations ±5%
+        - **Recommandations** : Placements et financements optimisés
+        """)
+        
+        # ========================================================================
+        # DETTE €20M - CALCUL EXPLICITE
+        # ========================================================================
+        st.markdown("### 💰 Dette Identifiée (selon spécifications)")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Principal", f"{DEBT_PRINCIPAL:,.0f} EUR", help="Dette totale selon spécifications")
+        with col2:
+            st.metric("Taux Variable", f"{DEBT_INTEREST_RATE*100:.2f}%", 
+                     help=f"Euribor 3M ({EURIBOR_3M_BASE*100:.2f}%) + Spread ({DEBT_SPREAD*100:.2f}%)")
+        with col3:
+            st.metric("Intérêts Mensuels", f"{DEBT_MONTHLY_INTEREST:,.2f} EUR",
+                     help=f"Calcul: {DEBT_PRINCIPAL:,.0f} × {DEBT_INTEREST_RATE*100:.2f}% / 12")
+        
+        st.info("""
+        **📌 Calcul des Intérêts:**
+        - Principal : €20,000,000
+        - Taux : Euribor 3M (3.5% estimé) + Spread (1.2%) = **4.7% annuel**
+        - Intérêts mensuels : €20,000,000 × 4.7% / 12 = **€78,333.33/mois**
+        
+        ⚠️ **Note:** Le taux Euribor 3M est estimé à 3.5% pour début 2025. 
+        En production, il faudrait récupérer le taux réel via une API financière.
+        """)
+        
+        # ========================================================================
+        # SCÉNARIOS : BASE, OPTIMISTE, PESSIMISTE
+        # ========================================================================
+        st.markdown("### 📊 Scénarios de Forecast")
+        
+        scenario_tab1, scenario_tab2, scenario_tab3 = st.tabs(["📈 Base", "⬆️ Optimiste", "⬇️ Pessimiste"])
+        
+        with scenario_tab1:
+            st.markdown("#### 📈 Scénario Base")
+            st.info("""
+            **Hypothèses:**
+            - Taux d'intérêt : Euribor 3M + 1.2% (4.7%)
+            - Taux de change : Taux actuels (USD/EUR, JPY/EUR)
+            - Volumes : Moyennes historiques
+            - Inflation : Taux calculé depuis données historiques
+            - DSO/DPO : Moyennes historiques
+            """)
+            if 'forecast_results' in st.session_state and st.session_state.forecast_results is not None:
+                st.success("✅ Ce scénario correspond au forecast standard lancé dans la section '🎯 Lancer Forecast'")
+            else:
+                st.warning("⚠️ Lancez d'abord un forecast dans la section '🎯 Lancer Forecast' pour voir les résultats")
+        
+        with scenario_tab2:
+            st.markdown("#### ⬆️ Scénario Optimiste")
+            st.info("""
+            **Hypothèses:**
+            - Taux d'intérêt : **-100bp** (Euribor 3M baisse de 1%)
+            - Taux de change : **+5%** pour USD et JPY (devises étrangères se renforcent)
+            - Volumes : **+10%** par rapport à la moyenne
+            - Inflation : **-0.5%** par rapport au scénario base
+            - DSO : **-5 jours** (recouvrement plus rapide)
+            - DPO : **+5 jours** (paiements fournisseurs plus tardifs)
+            - Taux d'impayés : **-50%** par rapport au scénario base
+            """)
+            new_rate_opt = max(0, EURIBOR_3M_BASE - 0.01) + DEBT_SPREAD
+            new_interest_opt = DEBT_PRINCIPAL * (new_rate_opt / 12)
+            st.warning(f"⚠️ **Impact sur intérêts:** Intérêts mensuels réduits à ~€{new_interest_opt:,.0f}/mois (au lieu de €{DEBT_MONTHLY_INTEREST:,.0f})")
+            st.warning("⚠️ **Impact FX:** Encaissements USD/JPY augmentent de 5% en EUR")
+        
+        with scenario_tab3:
+            st.markdown("#### ⬇️ Scénario Pessimiste")
+            st.info("""
+            **Hypothèses:**
+            - Taux d'intérêt : **+100bp** (Euribor 3M hausse de 1%)
+            - Taux de change : **-5%** pour USD et JPY (devises étrangères se déprécient)
+            - Volumes : **-10%** par rapport à la moyenne
+            - Inflation : **+0.5%** par rapport au scénario base
+            - DSO : **+5 jours** (recouvrement plus lent)
+            - DPO : **-5 jours** (paiements fournisseurs plus précoces)
+            - Taux d'impayés : **+50%** par rapport au scénario base
+            """)
+            new_rate_pess = EURIBOR_3M_BASE + 0.01 + DEBT_SPREAD
+            new_interest_pess = DEBT_PRINCIPAL * (new_rate_pess / 12)
+            st.error(f"🚨 **Impact sur intérêts:** Intérêts mensuels augmentés à ~€{new_interest_pess:,.0f}/mois (au lieu de €{DEBT_MONTHLY_INTEREST:,.0f})")
+            st.error("🚨 **Impact FX:** Encaissements USD/JPY diminuent de 5% en EUR")
+        
+        # ========================================================================
+        # SIMULATION CHOCS DE TAUX D'INTÉRÊT (±100bp)
+        # ========================================================================
+        st.markdown("### 📈 Simulation Chocs de Taux d'Intérêt (±100bp)")
+        
+        st.markdown("""
+        Selon les spécifications, il faut simuler l'impact de variations de ±100bp (1%) sur le taux Euribor 3M.
+        """)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### ⬆️ Choc +100bp (Hausse)")
+            new_rate_up = EURIBOR_3M_BASE + 0.01 + DEBT_SPREAD  # +100bp
+            new_interest_up = DEBT_PRINCIPAL * (new_rate_up / 12)
+            impact_up = new_interest_up - DEBT_MONTHLY_INTEREST
+            
+            st.metric("Nouveau Taux", f"{new_rate_up*100:.2f}%", 
+                     delta=f"+1.00%", delta_color="inverse")
+            st.metric("Nouveaux Intérêts Mensuels", f"{new_interest_up:,.2f} EUR",
+                     delta=f"+{impact_up:,.2f} EUR/mois", delta_color="inverse")
+            st.metric("Impact Annuel", f"{impact_up*12:,.2f} EUR/an",
+                     help="Impact supplémentaire sur les charges d'intérêts")
+        
+        with col2:
+            st.markdown("#### ⬇️ Choc -100bp (Baisse)")
+            new_rate_down = max(0, EURIBOR_3M_BASE - 0.01) + DEBT_SPREAD  # -100bp
+            new_interest_down = DEBT_PRINCIPAL * (new_rate_down / 12)
+            impact_down = DEBT_MONTHLY_INTEREST - new_interest_down
+            
+            st.metric("Nouveau Taux", f"{new_rate_down*100:.2f}%",
+                     delta=f"-1.00%", delta_color="normal")
+            st.metric("Nouveaux Intérêts Mensuels", f"{new_interest_down:,.2f} EUR",
+                     delta=f"-{impact_down:,.2f} EUR/mois", delta_color="normal")
+            st.metric("Économie Annuelle", f"{impact_down*12:,.2f} EUR/an",
+                     help="Économie sur les charges d'intérêts")
+        
+        st.markdown("""
+        **💡 Recommandations de Couverture (Hedging):**
+        - **Swap de taux d'intérêt (IRS)** : Fixer le taux pour protéger contre les hausses
+        - **Cap (plafond)** : Limiter l'exposition à la hausse tout en bénéficiant des baisses
+        - **Refinancement** : Négocier un taux fixe si les taux sont bas
+        """)
+        
+        # ========================================================================
+        # SIMULATION VARIATIONS FX (±5%)
+        # ========================================================================
+        st.markdown("### 💱 Simulation Variations FX (±5%)")
+        
+        usd_rate_current = fx_rates.get('USD', 0.92)
+        jpy_rate_current = fx_rates.get('JPY', 0.0065)
+        
+        # Calculer l'exposition FX depuis les données
+        bank_usd = bank[bank['currency'] == 'USD']
+        bank_jpy = bank[bank['currency'] == 'JPY']
+        exposure_usd_amount = bank_usd['amount'].sum() if len(bank_usd) > 0 else 0
+        exposure_jpy_amount = bank_jpy['amount'].sum() if len(bank_jpy) > 0 else 0
+        
+        st.markdown("#### 📊 Exposition FX Actuelle")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Exposition USD", f"{exposure_usd_amount:,.2f} USD",
+                     help="Montant total en USD dans les transactions")
+            st.metric("Valeur EUR Actuelle", f"{exposure_usd_amount * usd_rate_current:,.2f} EUR")
+        with col2:
+            st.metric("Exposition JPY", f"{exposure_jpy_amount:,.2f} JPY",
+                     help="Montant total en JPY dans les transactions")
+            st.metric("Valeur EUR Actuelle", f"{exposure_jpy_amount * jpy_rate_current:,.2f} EUR")
+        
+        st.markdown("#### 📈 Impact des Variations ±5%")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("##### ⬆️ Variation +5% (Devises se renforcent)")
+            usd_rate_up = usd_rate_current * 1.05
+            jpy_rate_up = jpy_rate_current * 1.05
+            impact_usd_up = exposure_usd_amount * (usd_rate_up - usd_rate_current)
+            impact_jpy_up = exposure_jpy_amount * (jpy_rate_up - jpy_rate_current)
+            
+            st.metric("USD/EUR", f"{usd_rate_up:.4f}", delta="+5%", delta_color="normal")
+            st.metric("Impact USD", f"+{impact_usd_up:,.2f} EUR",
+                     help="Gain sur encaissements USD")
+            st.metric("JPY/EUR", f"{jpy_rate_up:.6f}", delta="+5%", delta_color="normal")
+            st.metric("Impact JPY", f"+{impact_jpy_up:,.2f} EUR",
+                     help="Gain sur encaissements JPY")
+            st.success(f"✅ **Gain Total:** +{impact_usd_up + impact_jpy_up:,.2f} EUR")
+        
+        with col2:
+            st.markdown("##### ⬇️ Variation -5% (Devises se déprécient)")
+            usd_rate_down = usd_rate_current * 0.95
+            jpy_rate_down = jpy_rate_current * 0.95
+            impact_usd_down = exposure_usd_amount * (usd_rate_down - usd_rate_current)
+            impact_jpy_down = exposure_jpy_amount * (jpy_rate_down - jpy_rate_current)
+            
+            st.metric("USD/EUR", f"{usd_rate_down:.4f}", delta="-5%", delta_color="inverse")
+            st.metric("Impact USD", f"{impact_usd_down:,.2f} EUR",
+                     help="Perte sur encaissements USD")
+            st.metric("JPY/EUR", f"{jpy_rate_down:.6f}", delta="-5%", delta_color="inverse")
+            st.metric("Impact JPY", f"{impact_jpy_down:,.2f} EUR",
+                     help="Perte sur encaissements JPY")
+            st.error(f"🚨 **Perte Total:** {impact_usd_down + impact_jpy_down:,.2f} EUR")
+        
+        st.markdown("""
+        **💡 Recommandations de Couverture FX:**
+        - **Forwards FX** : Verrouiller les taux pour les encaissements futurs
+        - **Netting** : Compenser les positions longues et courtes par devise
+        - **Options FX** : Protéger contre les pertes tout en bénéficiant des gains
+        - **Natural Hedging** : Aligner les encaissements et décaissements par devise
+        """)
+        
+        # ========================================================================
+        # ANALYSE DES RISQUES DU FORECAST (si disponible)
+        # ========================================================================
+        if 'forecast_results' in st.session_state and st.session_state.forecast_results is not None:
             results = st.session_state.forecast_results
             
-            st.markdown("### 🎯 Analyse des Risques")
+            st.markdown("### 🎯 Analyse des Risques du Forecast Actuel")
+            
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Safe", results['risk_zones']['Safe'], delta="jours")
@@ -715,6 +1045,15 @@ dpo_mean = purchase_paid_valid['days_to_pay'].mean()
                                 size=8
                             )
                         ))
+                
+                fig.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Solde zéro")
+                fig.update_layout(
+                    title="Zones de Risque du Forecast",
+                    xaxis_title="Date",
+                    yaxis_title="Solde Cumulé (EUR)",
+                    hovermode='closest'
+                )
+                st.plotly_chart(fig, use_container_width=True)
                 
                 fig.update_layout(
                     title="Zones de Risque (Solde Net)",
