@@ -13,9 +13,10 @@ src_path = Path(__file__).parent.parent
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from config import get_config
-from data import load_all_data, calculate_metrics
-from utils import get_real_exchange_rates
+# Use absolute imports from src
+from src.config import get_config
+from src.data import load_all_data, calculate_metrics
+from src.utils import get_real_exchange_rates
 
 
 def main():
