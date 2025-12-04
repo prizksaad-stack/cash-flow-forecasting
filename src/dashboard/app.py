@@ -28,7 +28,7 @@ if str(root_path) not in sys.path:
 from src.config import get_config, MAX_FORECAST_DATE, DEBT_PRINCIPAL
 from src.data import load_all_data, calculate_metrics
 from src.utils import get_real_exchange_rates
-from src.forecast import run_forecast
+from src.forecast.engine import run_forecast
 
 
 # CSS personnalisé
