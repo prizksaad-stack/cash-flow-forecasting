@@ -64,21 +64,23 @@ def main():
                     break
             
             if data_dir is None:
-                st.warning("""
-                ⚠️ **Fichiers CSV non trouvés**
-                
-                Les fichiers de données CSV doivent être dans le repository GitHub pour que l'application fonctionne.
-                
-                **Fichiers requis:**
-                - `bank_transactions.csv`
-                - `sales_invoices.csv`
-                - `purchase_invoices.csv`
-                
-                **Solutions:**
-                1. Ajoutez les fichiers CSV au repository GitHub
-                2. Ou utilisez des données de démonstration (à implémenter)
-                """)
-                return
+                # Try current directory (where CSV files should be in the repo)
+                data_dir = Path.cwd()
+                csv_path = data_dir / 'bank_transactions.csv'
+                if not csv_path.exists():
+                    st.warning("""
+                    ⚠️ **Fichiers CSV non trouvés**
+                    
+                    Les fichiers de données CSV doivent être dans le repository GitHub pour que l'application fonctionne.
+                    
+                    **Fichiers requis:**
+                    - `bank_transactions.csv`
+                    - `sales_invoices.csv`
+                    - `purchase_invoices.csv`
+                    
+                    **Vérifiez que les fichiers sont bien dans le repository.**
+                    """)
+                    return
             
             config = get_config(script_path)
             bank, sales, purchase = load_all_data(data_dir)
