@@ -235,6 +235,154 @@ def main():
             st.metric("📅 Période", f"{bank['date'].min().strftime('%Y-%m-%d')} à {bank['date'].max().strftime('%Y-%m-%d')}")
         
         st.markdown("---")
+        
+        # ========================================================================
+        # SOLDES DES COMPTES EN FIN D'ANNÉE 2024
+        # ========================================================================
+        st.markdown("### 💰 Soldes des Comptes en Fin d'Année 2024")
+        
+        # Filtrer les transactions jusqu'au 31 décembre 2024
+        end_2024 = datetime(2024, 12, 31).date()
+        bank_2024 = bank[bank['date'].dt.date <= end_2024].copy()
+        
+        if 'account' in bank_2024.columns:
+            # Calculer les soldes par compte et devise
+            account_balances = {}
+            for account in bank_2024['account'].unique():
+                account_data = bank_2024[bank_2024['account'] == account]
+                for currency in account_data['currency'].unique():
+                    currency_data = account_data[account_data['currency'] == currency]
+                    
+                    # Calculer le solde net (credits - debits)
+                    credits = currency_data[currency_data['type'] == 'credit']['amount'].sum()
+                    debits = currency_data[currency_data['type'] == 'debit']['amount'].sum()
+                    net_balance = credits - debits
+                    
+                    # Conversion en EUR pour le total
+                    if 'amount_eur' in currency_data.columns:
+                        credits_eur = currency_data[currency_data['type'] == 'credit']['amount_eur'].sum()
+                        debits_eur = currency_data[currency_data['type'] == 'debit']['amount_eur'].sum()
+                        net_balance_eur = credits_eur - debits_eur
+                    else:
+                        # Fallback si amount_eur n'existe pas
+                        rate = fx_rates.get(currency, 1.0)
+                        net_balance_eur = net_balance * rate
+                    
+                    key = f"{account}_{currency}"
+                    account_balances[key] = {
+                        'account': account,
+                        'currency': currency,
+                        'balance': net_balance,
+                        'balance_eur': net_balance_eur,
+                        'credits': credits,
+                        'debits': debits
+                    }
+            
+            # Afficher les soldes par compte
+            if account_balances:
+                col1, col2, col3, col4 = st.columns(4)
+                accounts_displayed = 0
+                for key, balance_info in account_balances.items():
+                    if accounts_displayed % 4 == 0:
+                        col = col1
+                    elif accounts_displayed % 4 == 1:
+                        col = col2
+                    elif accounts_displayed % 4 == 2:
+                        col = col3
+                    else:
+                        col = col4
+                    
+                    with col:
+                        currency_symbol = balance_info['currency']
+                        balance_value = balance_info['balance']
+                        balance_eur_value = balance_info['balance_eur']
+                        account_name = balance_info['account'].replace('_', ' ')
+                        
+                        st.metric(
+                            f"{account_name} ({currency_symbol})",
+                            f"{balance_value:,.2f} {currency_symbol}",
+                            delta=f"{balance_eur_value:,.2f} EUR"
+                        )
+                    accounts_displayed += 1
+                
+                # Tableau détaillé
+                st.markdown("#### 📊 Détail des Soldes par Compte")
+                balance_df = pd.DataFrame([
+                    {
+                        'Compte': info['account'].replace('_', ' '),
+                        'Devise': info['currency'],
+                        'Solde': f"{info['balance']:,.2f} {info['currency']}",
+                        'Solde (EUR)': f"{info['balance_eur']:,.2f} EUR",
+                        'Encaissements': f"{info['credits']:,.2f} {info['currency']}",
+                        'Décaissements': f"{info['debits']:,.2f} {info['currency']}"
+                    }
+                    for info in account_balances.values()
+                ])
+                st.dataframe(balance_df, use_container_width=True, hide_index=True)
+        else:
+            # Si pas de colonne account, calculer par devise uniquement
+            st.warning("⚠️ Colonne 'account' non trouvée. Affichage par devise uniquement.")
+            for currency in bank_2024['currency'].unique():
+                currency_data = bank_2024[bank_2024['currency'] == currency]
+                credits = currency_data[currency_data['type'] == 'credit']['amount'].sum()
+                debits = currency_data[currency_data['type'] == 'debit']['amount'].sum()
+                net_balance = credits - debits
+                st.metric(f"Solde {currency}", f"{net_balance:,.2f} {currency}")
+        
+        st.markdown("---")
+        
+        # ========================================================================
+        # PAIEMENTS RÉCURRENTS
+        # ========================================================================
+        st.markdown("### 🔄 Paiements Récurrents (2024)")
+        
+        # Identifier les paiements récurrents
+        recurring_categories = ['Loan Interest', 'Payroll', 'Bank Fee', 'Supplier Payment']
+        bank_recurring_2024 = bank_2024[bank_2024['category'].isin(recurring_categories)].copy()
+        
+        if len(bank_recurring_2024) > 0:
+            # Par catégorie
+            st.markdown("#### 📋 Par Catégorie")
+            recurring_by_category = bank_recurring_2024.groupby('category').agg({
+                'amount_eur': ['sum', 'count', 'mean']
+            }).round(2)
+            recurring_by_category.columns = ['Total (EUR)', 'Nombre', 'Moyenne (EUR)']
+            st.dataframe(recurring_by_category, use_container_width=True)
+            
+            # Par compte
+            if 'account' in bank_recurring_2024.columns:
+                st.markdown("#### 💳 Par Compte")
+                recurring_by_account = bank_recurring_2024.groupby(['account', 'currency']).agg({
+                    'amount_eur': ['sum', 'count']
+                }).round(2)
+                recurring_by_account.columns = ['Total (EUR)', 'Nombre']
+                st.dataframe(recurring_by_account, use_container_width=True)
+            
+            # Par mois
+            st.markdown("#### 📅 Évolution Mensuelle")
+            bank_recurring_2024['month'] = bank_recurring_2024['date'].dt.to_period('M')
+            recurring_monthly = bank_recurring_2024.groupby('month')['amount_eur'].sum().sort_index()
+            
+            fig = px.bar(
+                x=[str(m) for m in recurring_monthly.index],
+                y=recurring_monthly.values,
+                title="Paiements Récurrents Mensuels (2024)",
+                labels={'x': 'Mois', 'y': 'Montant (EUR)'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Statistiques
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Récurrents 2024", f"{bank_recurring_2024['amount_eur'].sum():,.2f} EUR")
+            with col2:
+                st.metric("Moyenne Mensuelle", f"{recurring_monthly.mean():,.2f} EUR")
+            with col3:
+                st.metric("Nombre de Transactions", f"{len(bank_recurring_2024):,}")
+        else:
+            st.info("ℹ️ Aucun paiement récurrent identifié dans les données 2024.")
+        
+        st.markdown("---")
         st.markdown("### 📐 Méthode de Forecast: Direct Method")
         st.info("""
         **Direct Method (Méthode Directe)** - Forecast transaction par transaction
