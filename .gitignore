@@ -42,6 +42,9 @@ Thumbs.db
 # Fichiers temporaires
 *.tmp
 *.bak
+PUSH_MANUEL.md
+STREAMLIT_PATH.md
+STATUS_*.md
 
 # Fichiers de données (à exclure si sensibles)
 # Décommentez si vous ne voulez pas versionner les CSV
