@@ -49,16 +49,39 @@ def main():
         try:
             # Get config - data_dir should be parent of Python directory
             script_path = Path(__file__).absolute()
-            # Go up: dashboard -> src -> Python -> deliverables_improved
-            # For Streamlit Cloud, data should be in parent directory
-            data_dir = script_path.parent.parent.parent.parent
+            # For Streamlit Cloud, try multiple locations
+            possible_dirs = [
+                Path.cwd(),  # Current directory (Streamlit Cloud root)
+                Path.cwd().parent,  # Parent directory
+                script_path.parent.parent.parent.parent,  # Original structure
+            ]
+            
+            data_dir = None
+            for dir_path in possible_dirs:
+                csv_path = dir_path / 'bank_transactions.csv'
+                if csv_path.exists():
+                    data_dir = dir_path
+                    break
+            
+            if data_dir is None:
+                st.warning("""
+                ⚠️ **Fichiers CSV non trouvés**
+                
+                Les fichiers de données CSV doivent être dans le repository GitHub pour que l'application fonctionne.
+                
+                **Fichiers requis:**
+                - `bank_transactions.csv`
+                - `sales_invoices.csv`
+                - `purchase_invoices.csv`
+                
+                **Solutions:**
+                1. Ajoutez les fichiers CSV au repository GitHub
+                2. Ou utilisez des données de démonstration (à implémenter)
+                """)
+                return
+            
             config = get_config(script_path)
-            # Try to load from data_dir (parent of Python/)
-            try:
-                bank, sales, purchase = load_all_data(data_dir)
-            except FileNotFoundError:
-                # If not found, try current directory (for Streamlit Cloud)
-                bank, sales, purchase = load_all_data(Path.cwd())
+            bank, sales, purchase = load_all_data(data_dir)
             
             st.success("✅ Données chargées avec succès!")
             st.write(f"- Transactions: {len(bank)}")
