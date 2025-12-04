@@ -339,35 +339,139 @@ def main():
         
         if variable == "DSO (Days Sales Outstanding)":
             st.markdown("### 📊 Calcul du DSO")
+            
+            st.markdown("""
+            <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin-bottom: 20px; color: #155724;">
+            <strong>📌 NATURE DE LA VALEUR :</strong><br>
+            ✅ <strong>CALCULÉE</strong> depuis données historiques réelles<br>
+            📊 <strong>Source :</strong> Factures clients avec status='Paid' dans sales_invoices.csv<br>
+            🎯 <strong>Fiabilité :</strong> Élevée (basée sur transactions réelles payées)
+            </div>
+            """, unsafe_allow_html=True)
+            
             st.markdown('<div class="calculation-box">', unsafe_allow_html=True)
             st.markdown("**Formule mathématique:**")
             st.latex(r"DSO = \frac{1}{n} \sum_{i=1}^{n} (payment\_date_i - issue\_date_i)")
             st.markdown("</div>", unsafe_allow_html=True)
             
+            st.markdown("**Implémentation Python:**")
+            st.code("""
+# Filtrer les factures payées
+sales_paid = sales[sales['status'] == 'Paid'].copy()
+
+# Calculer days_to_pay pour les factures avec dates valides
+sales_paid['has_valid_dates'] = (
+    sales_paid['payment_date'].notna() & 
+    sales_paid['issue_date'].notna()
+)
+
+sales_paid.loc[sales_paid['has_valid_dates'], 'days_to_pay'] = (
+    sales_paid.loc[sales_paid['has_valid_dates'], 'payment_date'] - 
+    sales_paid.loc[sales_paid['has_valid_dates'], 'issue_date']
+).dt.days
+
+# Calculer la moyenne
+sales_paid_valid = sales_paid[sales_paid['has_valid_dates']].copy()
+dso_mean = sales_paid_valid['days_to_pay'].mean()
+            """, language='python')
+            
             st.markdown("**Valeur calculée:**")
             st.metric("DSO Moyen", f"{dso_mean:.1f} jours")
-            st.info(f"Calculé depuis {len(metrics.get('sales_paid_valid', pd.DataFrame()))} factures payées avec dates valides")
+            
+            sales_paid_valid_count = len(metrics.get('sales_paid_valid', pd.DataFrame()))
+            st.info(f"✅ Calculé depuis **{sales_paid_valid_count}** factures payées avec dates valides")
         
         elif variable == "DPO (Days Payable Outstanding)":
             st.markdown("### 📊 Calcul du DPO")
+            
+            st.markdown("""
+            <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin-bottom: 20px; color: #155724;">
+            <strong>📌 NATURE DE LA VALEUR :</strong><br>
+            ✅ <strong>CALCULÉE</strong> depuis données historiques réelles<br>
+            📊 <strong>Source :</strong> Factures fournisseurs avec status='Paid' dans purchase_invoices.csv<br>
+            🎯 <strong>Fiabilité :</strong> Élevée (basée sur transactions réelles payées)
+            </div>
+            """, unsafe_allow_html=True)
+            
             st.markdown('<div class="calculation-box">', unsafe_allow_html=True)
             st.markdown("**Formule mathématique:**")
             st.latex(r"DPO = \frac{1}{n} \sum_{i=1}^{n} (payment\_date_i - issue\_date_i)")
             st.markdown("</div>", unsafe_allow_html=True)
             
+            st.markdown("**Implémentation Python:**")
+            st.code("""
+# Filtrer les factures payées
+purchase_paid = purchase[purchase['status'] == 'Paid'].copy()
+
+# Calculer days_to_pay pour les factures avec dates valides
+purchase_paid['has_valid_dates'] = (
+    purchase_paid['payment_date'].notna() & 
+    purchase_paid['issue_date'].notna()
+)
+
+purchase_paid.loc[purchase_paid['has_valid_dates'], 'days_to_pay'] = (
+    purchase_paid.loc[purchase_paid['has_valid_dates'], 'payment_date'] - 
+    purchase_paid.loc[purchase_paid['has_valid_dates'], 'issue_date']
+).dt.days
+
+# Calculer la moyenne
+purchase_paid_valid = purchase_paid[purchase_paid['has_valid_dates']].copy()
+dpo_mean = purchase_paid_valid['days_to_pay'].mean()
+            """, language='python')
+            
             st.markdown("**Valeur calculée:**")
             st.metric("DPO Moyen", f"{dpo_mean:.1f} jours")
-            st.info(f"Calculé depuis {len(metrics.get('purchase_paid_valid', pd.DataFrame()))} factures payées avec dates valides")
+            
+            purchase_paid_valid_count = len(metrics.get('purchase_paid_valid', pd.DataFrame()))
+            st.info(f"✅ Calculé depuis **{purchase_paid_valid_count}** factures payées avec dates valides")
         
         elif variable == "Solde Initial":
             st.markdown("### 💰 Calcul du Solde Initial")
+            
             st.markdown("""
-            Le solde initial est la somme de toutes les transactions jusqu'à la date de début du forecast.
-            Calculé séparément par devise puis converti en EUR équivalent.
+            <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin-bottom: 20px; color: #155724;">
+            <strong>📌 NATURE DE LA VALEUR :</strong><br>
+            ✅ <strong>CALCULÉE</strong> depuis transactions bancaires historiques<br>
+            📊 <strong>Source :</strong> Toutes les transactions dans bank_transactions.csv<br>
+            💱 <strong>Multi-devises :</strong> Calculé séparément par devise (EUR, USD, JPY) puis converti en EUR
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown('<div class="calculation-box">', unsafe_allow_html=True)
+            st.markdown("**Méthode de calcul:**")
+            st.markdown("""
+            Solde Initial = Σ (toutes les transactions jusqu'à la date de début)
+            
+            Par devise:
+            - EUR: Somme directe
+            - USD: Somme × taux USD/EUR
+            - JPY: Somme × taux JPY/EUR
+            
+            Total = EUR + USD_converti + JPY_converti
             """)
-            # Calculer le solde initial (simplifié)
-            initial_balance = bank['amount_eur'].sum()
-            st.metric("Solde Initial Total", f"{initial_balance:,.2f} EUR")
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            # Calculer le solde initial par devise
+            if 'currency' in bank.columns and 'amount_eur' in bank.columns:
+                balance_eur = bank[bank['currency'] == 'EUR']['amount_eur'].sum() if len(bank[bank['currency'] == 'EUR']) > 0 else 0
+                balance_usd = bank[bank['currency'] == 'USD']['amount_eur'].sum() if len(bank[bank['currency'] == 'USD']) > 0 else 0
+                balance_jpy = bank[bank['currency'] == 'JPY']['amount_eur'].sum() if len(bank[bank['currency'] == 'JPY']) > 0 else 0
+                total_balance = balance_eur + balance_usd + balance_jpy
+            else:
+                total_balance = bank['amount_eur'].sum() if 'amount_eur' in bank.columns else 0
+            
+            st.markdown("**Valeur calculée:**")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("EUR", f"{balance_eur:,.2f} EUR" if 'balance_eur' in locals() else "N/A")
+            with col2:
+                st.metric("USD", f"{balance_usd:,.2f} EUR" if 'balance_usd' in locals() else "N/A")
+            with col3:
+                st.metric("JPY", f"{balance_jpy:,.2f} EUR" if 'balance_jpy' in locals() else "N/A")
+            with col4:
+                st.metric("Total", f"{total_balance:,.2f} EUR")
+            
+            st.info(f"✅ Calculé depuis **{len(bank)}** transactions bancaires historiques")
     
     # ========================================================================
     # SECTION 4: VISUALISATIONS
