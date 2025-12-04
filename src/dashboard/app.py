@@ -408,6 +408,218 @@ def main():
         
         for step_num, step_desc in steps:
             st.markdown(f'<div class="step-box"><strong>{step_num}</strong> {step_desc}</div>', unsafe_allow_html=True)
+        
+        st.markdown("---")
+        st.markdown("### 📖 Détail Technique de Chaque Étape")
+        
+        with st.expander("1️⃣ Chargement & Nettoyage - Détails", expanded=False):
+            st.markdown("""
+            **Ce qui a été fait :**
+            
+            **A. Chargement des fichiers CSV**
+            - `bank_transactions.csv` : Transactions bancaires (date, account, currency, type, amount, category)
+            - `sales_invoices.csv` : Factures clients (issue_date, due_date, payment_date, amount, currency, status)
+            - `purchase_invoices.csv` : Factures fournisseurs (issue_date, due_date, payment_date, amount, currency, status)
+            - Parsing automatique des dates avec `parse_dates`
+            
+            **B. Nettoyage et validation**
+            - Vérification de l'existence des fichiers (FileNotFoundError)
+            - Gestion des erreurs de parsing (ValueError)
+            - Conversion des devises en EUR via API exchangerate-api.com
+            - Fallback sur taux moyens 2024 si API indisponible (USD: 0.92, JPY: 0.0065)
+            
+            **C. Calcul DSO (Days Sales Outstanding)**
+            - Filtrer les factures avec `status='Paid'`
+            - Vérifier que `payment_date` ET `issue_date` sont valides (notna)
+            - Calculer `days_to_pay = payment_date - issue_date`
+            - DSO moyen = moyenne des `days_to_pay`
+            - Gestion des cas limites : ignorer les factures avec dates manquantes
+            
+            **D. Calcul DPO (Days Payable Outstanding)**
+            - Même méthode que DSO mais pour les factures fournisseurs
+            - Utilisé pour projeter les dates de paiement des factures ouvertes
+            """)
+        
+        with st.expander("2️⃣ Classification - Détails", expanded=False):
+            st.markdown("""
+            **Ce qui a été fait :**
+            
+            **A. Classification par catégorie**
+            - **Catégories récurrentes** (prévisibles) :
+              - Payroll, Supplier Payment, Loan Interest, Bank Fee, Tax Payment, Transfer to Payroll
+            - Ajout de la colonne `flow_type` dans le DataFrame `bank`
+            - Classification automatique basée sur la colonne `category`
+            - Toutes les autres catégories = 'Non-récurrent'
+            
+            **B. Statistiques de classification**
+            - Nombre de transactions récurrentes vs non-récurrentes
+            - Pourcentage de chaque type
+            - Visualisation avec graphique en camembert (Plotly)
+            
+            **C. Utilisation dans le forecast**
+            - Calcul de la moyenne mensuelle des paiements récurrents
+            - Ajout automatique le 1er de chaque mois dans le forecast
+            - Inclusion des intérêts de la dette €20M (DEBT_MONTHLY_INTEREST)
+            """)
+        
+        with st.expander("3️⃣ Saisonnalité - Détails", expanded=False):
+            st.markdown("""
+            **Ce qui a été fait :**
+            
+            **A. Patterns hebdomadaires**
+            - Extraire le jour de la semaine (day_name) : Monday, Tuesday, etc.
+            - Grouper par (date_only, day_name, type)
+            - Calculer la moyenne des montants par jour de la semaine
+            - Séparer crédits et débits
+            - Résultat : `weekly_credit_pattern` et `weekly_debit_pattern` (dictionnaires)
+            - **Utilisation** : Ajustement quotidien basé sur le jour de la semaine dans le forecast
+            
+            **B. Patterns mensuels**
+            - Filtrer les coûts récurrents (Supplier Payment, Payroll, Loan Interest)
+            - Grouper par mois (to_period('M'))
+            - Calculer l'évolution mois par mois
+            - Taux d'inflation annuel = moyenne des taux de croissance × 12
+            - Validation : minimum 6 mois de données, limite à 10% maximum
+            - Fallback à 2% (moyenne zone euro) si données insuffisantes
+            
+            **C. Statistiques quotidiennes**
+            - `avg_daily_credit` : Moyenne des encaissements quotidiens
+            - `avg_daily_debit` : Moyenne des décaissements quotidiens
+            - `std_daily_credit` : Écart-type des encaissements
+            - `std_daily_debit` : Écart-type des décaissements
+            """)
+        
+        with st.expander("4️⃣ Facteurs d'Impact - Détails", expanded=False):
+            st.markdown("""
+            **Ce qui a été fait :**
+            
+            **A. Inflation**
+            - Calculée depuis l'évolution des coûts récurrents (étape 3)
+            - Taux annuel converti en ajustement quotidien : `1 + (inflation_rate × jour / 365)`
+            
+            **B. Volatilité des volumes**
+            - Coefficient de variation : `volume_volatility = std / avg`
+            - Calculé pour encaissements et décaissements
+            - Utilisation : Ajustement aléatoire basé sur la volatilité historique
+            - Simulation : `1 + N(0, volatility × 0.3)` (distribution normale)
+            
+            **C. Retards de paiement**
+            - Taux de retard clients : `len(sales[sales['status']=='Overdue']) / len(sales)`
+            - Taux de retard fournisseurs : `len(purchase[purchase['status']=='Overdue']) / len(purchase)`
+            - Variations DSO/DPO : Écart-type des délais de paiement (mesure de dispersion)
+            
+            **D. Taux de change (FX)**
+            - Récupération via API exchangerate-api.com pour taux réels
+            - Fallback sur moyennes 2024 si API indisponible
+            - Taux utilisés : USD/EUR, JPY/EUR
+            - Conversion : Toutes les transactions converties en EUR (`amount_eur`)
+            """)
+        
+        with st.expander("5️⃣ Forecast Quotidien - Détails", expanded=False):
+            st.markdown("""
+            **Ce qui a été fait :**
+            
+            **A. Préparation des factures ouvertes**
+            - Filtrer factures avec `status='Open'` ou `'Overdue'`
+            - Calculer `date_paiement_attendue = due_date + DSO` (ou DPO pour fournisseurs)
+            - Convertir montants en EUR
+            - Retourner DataFrame avec `payment_date` et `amount_eur`
+            
+            **B. Boucle de forecast quotidien (90 jours maximum)**
+            Pour chaque jour :
+            1. Calculer date du jour
+            2. Base historique selon jour de la semaine (pattern hebdomadaire)
+            3. Ajouter factures échues ce jour (encaissements/décaissements)
+            4. Appliquer ajustements :
+               - **Inflation** : `1 + (inflation_rate × jour / 365)`
+               - **Volatilité** : `1 + N(0, volatility × 0.3)` (aléatoire)
+            5. Paiements récurrents : ajout le 1er de chaque mois
+            6. Calculer cash flow net = encaissements - décaissements
+            7. Mettre à jour cumuls par devise (EUR, USD, JPY)
+            8. Calculer cumul total en EUR
+            
+            **C. Gestion multi-devises**
+            - Encaissements/décaissements calculés séparément pour EUR, USD, JPY
+            - Conversion en EUR pour le cumul total
+            - Suivi des soldes par devise
+            """)
+        
+        with st.expander("6️⃣ Multi-Devises - Détails", expanded=False):
+            st.markdown("""
+            **Ce qui a été fait :**
+            
+            **A. Conversion initiale**
+            - Toutes les transactions : colonne `amount_eur` ajoutée
+            - Conversion selon devise : `amount × fx_rate`
+            
+            **B. Forecast par devise**
+            - Encaissements EUR, USD, JPY calculés séparément
+            - Décaissements EUR, USD, JPY calculés séparément
+            - Cumuls par devise maintenus séparément
+            
+            **C. Conversion finale**
+            - Cumul total en EUR : `cumul_total = cumul_eur + (cumul_usd × usd_rate) + (cumul_jpy × jpy_rate)`
+            
+            **D. Gestion des comptes**
+            - Comptes par devise :
+              - EUR_Operating, EUR_Payroll (EUR)
+              - USD_Sales (USD)
+              - JPY_Sales (JPY)
+            - Soldes calculés et affichés par compte et devise
+            """)
+        
+        with st.expander("7️⃣ Détection de Risques - Détails", expanded=False):
+            st.markdown("""
+            **Ce qui a été fait :**
+            
+            **A. Calcul du solde net**
+            - Formule : `solde_net = cumul_total - DEBT_PRINCIPAL (€20M)`
+            
+            **B. Classification des zones de risque**
+            - **Safe** : `solde_net >= 0`
+            - **Warning** : `-100,000 <= solde_net < 0`
+            - **Critical** : `solde_net < -100,000`
+            
+            **C. Identification des jours critiques**
+            - Liste des dates avec solde négatif (`negative_days`)
+            - Comptage par zone de risque
+            - Identification du jour le plus critique (solde minimum)
+            
+            **D. Visualisation**
+            - Graphiques : Évolution du solde cumulé avec zones colorées
+            - Points marqués selon niveau de risque
+            - Ligne rouge à 0 pour référence
+            """)
+        
+        with st.expander("8️⃣ Recommandations - Détails", expanded=False):
+            st.markdown("""
+            **Ce qui a été fait :**
+            
+            **A. Analyse des risques**
+            - **Safe** : Recommandations d'optimisation (placements, investissements)
+            - **Warning** : Actions préventives (relances clients, négociations fournisseurs)
+            - **Critical** : Actions urgentes (escomptes, financements, réductions coûts)
+            
+            **B. Recommandations spécifiques**
+            - **Pour améliorer le DSO** :
+              - Relances clients
+              - Escomptes pour paiement anticipé (1-2%)
+              - Négociations de délais
+            
+            - **Pour optimiser le DPO** :
+              - Négociations avec fournisseurs
+              - Utilisation maximale des délais
+            
+            - **Pour gérer la dette** :
+              - Couverture de taux (hedging) : Swap IRS, Cap
+              - Refinancement si opportun
+            
+            **C. Scénarios**
+            - **Base, Optimiste, Pessimiste** :
+              - Simulation de variations de taux d'intérêt (±100bp)
+              - Simulation de variations FX (±5%)
+              - Impact sur les intérêts et encaissements
+            """)
     
     # ========================================================================
     # SECTION 2: MÉTHODES & THÉORIE
